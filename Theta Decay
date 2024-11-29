@@ -1,0 +1,87 @@
+import mibian as mb
+from datetime import date
+import pandas as pd
+import numpy as np
+
+# Set expiry date and calculate days until expiry
+expiry_date = '2025-03-21'
+today = date.today()
+days_until_expiry = (pd.to_datetime(expiry_date) - pd.to_datetime(today)).days
+
+# Generate list of dates from today until expiry and create DataFrame
+date_range = pd.date_range(today, periods=days_until_expiry)
+newlist = pd.DataFrame(date_range, columns=['Date'])
+newlist['Date'] = newlist['Date'].dt.date  # Remove timestamp from dates
+newlist['Days Remaining'] = days_until_expiry - np.arange(len(newlist))
+
+# Collect input parameters
+price_of_stock = float(input('Current Price of Stock: '))
+cp = int(input('Option Strike: '))  # User inputs put strike price
+option_price = float(input('Option Price: '))
+volatility = float(input('Volatility: '))
+
+# Set other constants
+interest_rate = 0.0489
+effective_option_price = (option_price + mb.BS([price_of_stock, cp, interest_rate, days_until_expiry], volatility).putPrice) / 2
+
+# Calculate option prices with 7%, 5% stock price adjustments
+price_negative = price_of_stock * 0.93  # Changed to -7%
+price_negative_2_5 = price_of_stock * 0.95
+price_positive = price_of_stock * 1.05
+fivedownopt = mb.BS([price_negative, cp, interest_rate, days_until_expiry], volatility).putPrice
+twofivedownopt = mb.BS([price_negative_2_5, cp, interest_rate, days_until_expiry], volatility).putPrice
+fiveupopt = mb.BS([price_positive, cp, interest_rate, days_until_expiry], volatility).putPrice
+
+# Calculate Theta Decay for each day
+newlist['Theta Decay'] = [
+    round(mb.BS([price_of_stock, cp, interest_rate, days], volatility).putTheta, 4)
+    for days in newlist['Days Remaining']
+]
+newlist['Cumulative'] = newlist['Theta Decay'].cumsum().round(4)
+
+# Calculate total decay over the first 30 days and gain after 30 days
+total_decay_30_days = newlist.loc[:29, 'Theta Decay'].sum()
+gain_after_30_days = (effective_option_price + total_decay_30_days) * 100
+print(f"Total value of decay after 30 days: ${total_decay_30_days:.2f}, representing a gain of ${gain_after_30_days:.2f}")
+
+# Calculate additional columns
+newlist['% Change'] = -newlist['Cumulative'] / effective_option_price
+newlist['Flat'] = (effective_option_price + newlist['Cumulative']).clip(lower=0.05)
+newlist['@ - 7%'] = fivedownopt + newlist['Cumulative']
+newlist['@ - 5%'] = twofivedownopt + newlist['Cumulative']
+newlist['@ + 5%'] = (fiveupopt + newlist['Cumulative']).clip(lower=0.05)
+
+# Calculate profit/loss for a written put for each scenario, multiplied by 100
+newlist['Flat P/L'] = (effective_option_price - newlist['Flat']) * 100
+newlist['@ - 7% P/L'] = (effective_option_price - newlist['@ - 7%']) * 100  # Updated label
+newlist['@ - 5% P/L'] = (effective_option_price - newlist['@ - 5%']) * 100
+newlist['@ + 5% P/L'] = (effective_option_price - newlist['@ + 5%']) * 100
+
+# Calculate the percentage difference for the put price
+put_price_percentage = (price_of_stock - cp) / price_of_stock * 100
+
+# Display DataFrame with formatted columns
+pd.set_option('display.max_rows', 500)
+print(f"• The effective option price is: {round(effective_option_price, 2)}")
+print(f"• The put strike price is {put_price_percentage:.2f}% below the current price.")
+
+# Exclude the first 30 days from the DataFrame
+newlist = newlist.iloc[30:]
+
+# Create and style the table, making the headers sticky
+table = newlist.style.format({
+    '% Change': "{:.1%}",
+    'Theta Decay': "{:.4f}",
+    'Cumulative': "{:.4f}",
+    '@ - 7%': "${:,.2f}",
+    '@ - 5%': "${:,.2f}",
+    '@ + 5%': "${:,.2f}",
+    'Flat': "${:,.2f}",
+    'Flat P/L': "${:,.2f}",
+    '@ - 7% P/L': "${:,.2f}",
+    '@ - 5% P/L': "${:,.2f}",
+    '@ + 5% P/L': "${:,.2f}"
+}).set_sticky()
+
+# Display the table
+table
